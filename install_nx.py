@@ -230,6 +230,7 @@ class Config:
         self.start_nx_url = cp.get("downloads", "start_nx_url").strip()
         self.role_url = cp.get("downloads", "role_url", fallback="").strip()
         self.dpv_url = cp.get("downloads", "dpv_url", fallback="").strip()
+        self.fcg_url = cp.get("downloads", "fcg_url", fallback="").strip()
         self.log_level = cp.get("logging", "log_level", fallback="INFO").strip()
         self.install_timeout = cp.getint("timeouts", "install_timeout_seconds", fallback=5400)
 
@@ -478,8 +479,9 @@ def fix_nx_permissions(install_dir: str, logger: logging.Logger, timeout: int = 
 def configure_role(config: Config, logger: logging.Logger) -> bool:
     role_url = config.role_url.strip()
     dpv_url = config.dpv_url.strip()
-    if not role_url and not dpv_url:
-        logger.debug("No role/dpv URL configured, skipping.")
+    fcg_url = config.fcg_url.strip()
+    if not role_url and not dpv_url and not fcg_url:
+        logger.debug("No role/dpv/fcg URL configured, skipping.")
         return True
     logger.info("Configuring NX role and preferences...")
     target_dir = Path(os.environ["LOCALAPPDATA"]) / "Siemens" / "NX2506"
@@ -506,6 +508,14 @@ def configure_role(config: Config, logger: logging.Logger) -> bool:
             logger.info(f"Preferences configured: {target_dir / 'NX_user.dpv'}")
         else:
             logger.warning("dpv download failed, skipping.")
+
+    if fcg_url:
+        fcg_file = dl.download(fcg_url, "feature_toggle_user.fcg")
+        if fcg_file:
+            shutil.copy2(fcg_file, target_dir / "feature_toggle_user.fcg")
+            logger.info(f"Feature toggle configured: {target_dir / 'feature_toggle_user.fcg'}")
+        else:
+            logger.warning("fcg download failed, skipping.")
 
     return True
 
@@ -708,6 +718,7 @@ class PostInstallValidator:
         self._check_binary(self.config.install_dir + "\\UGII\\ugraf.exe", "ugraf.exe")
         self._check_env_var()
         self._check_fcc()
+        self._check_nx_prefs()
 
         self.logger.info("-" * 40)
         self.logger.info("Validation Summary:")
@@ -770,6 +781,17 @@ class PostInstallValidator:
                 self.logger.warning(f"  java dir: not found ({zulu})")
         except Exception as e:
             self.logger.warning(f"  java validation error: {e}")
+
+    def _check_nx_prefs(self):
+        prefs_dir = Path(os.environ["LOCALAPPDATA"]) / "Siemens" / "NX2506"
+        for filename in ["user.mtx", "NX_user.dpv", "feature_toggle_user.fcg"]:
+            path = prefs_dir / filename
+            exists = path.exists()
+            self.results[f"{filename}"] = exists
+            if exists:
+                self.logger.info(f"  {filename}: OK")
+            else:
+                self.logger.warning(f"  {filename}: not found")
 
     def _check_zip(self, target_name: str, ref_zip: Path, ref_dir: Path, inst_dir: Path):
         zip_label = f"{target_name}.zip checksum"
