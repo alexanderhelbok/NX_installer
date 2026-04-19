@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?xml-stylesheet type="text/xsl" href="NX_user.xsl"?>
+<PrefValues defaultLockStatus="unlocked">
+<Pref Application="Teamcenter Integration" Category="General" Tab="Teamcenter Navigator" displayValue="On" modified="2026-01-17T19:20:29" name="TCIN_EnabledTCNavigator" title="Resource Bar - Teamcenter Navigator" value="true"/>
+</PrefValues>

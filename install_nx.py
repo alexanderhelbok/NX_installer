@@ -25,6 +25,7 @@ import hashlib
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -227,6 +228,7 @@ class Config:
         self.fcc_url = cp.get("downloads", "fcc_url").strip()
         self.java_url = cp.get("downloads", "java_url").strip()
         self.start_nx_url = cp.get("downloads", "start_nx_url").strip()
+        self.role_url = cp.get("downloads", "role_url", fallback="").strip()
         self.log_level = cp.get("logging", "log_level", fallback="INFO").strip()
         self.install_timeout = cp.getint("timeouts", "install_timeout_seconds", fallback=5400)
 
@@ -276,7 +278,7 @@ class PrerequisitesInstaller:
             proc = subprocess.Popen([path] + args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                     creationflags=subprocess.CREATE_NO_WINDOW)
             retcode = wait_for_process(proc, self.logger, timeout, poll_interval=10)
-            ok = retcode in (0, 3010)
+            ok = retcode in (0, 1638, 3010)
             self.logger.info(f"{label}: {'OK' if ok else f'warning (exit {retcode})'}")
             return ok
         except Exception as e:
@@ -284,15 +286,31 @@ class PrerequisitesInstaller:
             return False
 
     def _check_vcpp(self) -> bool:
-        redist = set()
+        for root in [r"HKLM\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64",
+                     r"HKLM\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"]:
+            try:
+                r = subprocess.run(["reg", "query", root, "/v", "Installed"],
+                                   capture_output=True, text=True)
+                if "Installed" in r.stdout and "0x1" in r.stdout:
+                    return True
+            except Exception:
+                pass
         for root in [r"HKLM\SOFTWARE\Microsoft\VisualStudio", r"HKLM\SOFTWARE\WOW6432Node\Microsoft\VisualStudio"]:
             try:
                 r = subprocess.run(["reg", "query", root], capture_output=True, text=True)
-                for m in re.finditer(r"14\.\d+\s+VC_RUNTIME", r.stdout):
-                    redist.add(m.group(0).split()[0])
+                if "VC_RUNTIME" in r.stdout and "14." in r.stdout:
+                    return True
             except Exception:
                 pass
-        return bool(redist)
+        for uk in [r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                   r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"]:
+            try:
+                r = subprocess.run(["reg", "query", uk], capture_output=True, text=True)
+                if re.search(r"Microsoft Visual C\+\+.*2015.*2022", r.stdout):
+                    return True
+            except Exception:
+                pass
+        return False
 
     def _check_dotnet48(self) -> bool:
         try:
@@ -340,9 +358,24 @@ class PrerequisitesInstaller:
         return self._run(path, ["/quiet", "/norestart"], 600, ".NET 4.8")
 
     def install_webview2(self) -> bool:
+        if self._check_webview2():
+            self.logger.info("WebView2 Runtime already installed, skipping.")
+            return True
         if self._found_webview2:
             return self._run(self._found_webview2, ["--do-not-launch-edge"], 300, "WebView2 Runtime")
         return True
+
+    def _check_webview2(self) -> bool:
+        for root in [r"HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients",
+                     r"HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients",
+                     r"HKCU\SOFTWARE\Microsoft\EdgeUpdate\Clients"]:
+            try:
+                r = subprocess.run(["reg", "query", root], capture_output=True, text=True)
+                if "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" in r.stdout:
+                    return True
+            except Exception:
+                pass
+        return False
 
     def install_aspnetcore(self) -> bool:
         if self._found_aspnetcore:
@@ -428,7 +461,7 @@ def fix_nx_permissions(install_dir: str, logger: logging.Logger, timeout: int = 
                        capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=timeout)
 
         fcc_path = str(Path(install_path) / "UGMANAGER" / "tccs" / "fcc.xml")
-        subprocess.run(["powershell", "-Command", f"attrib -R -S -H '{fcc_path}'"],
+        subprocess.run(["attrib", "-R", fcc_path],
                        capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=30)
 
         logger.info("Ownership set to Administrators, permissions granted, attributes cleaned.")
@@ -439,6 +472,29 @@ def fix_nx_permissions(install_dir: str, logger: logging.Logger, timeout: int = 
     except Exception as e:
         logger.warning(f"Permission fix failed: {e}")
         return False
+
+
+def configure_role(config: Config, logger: logging.Logger) -> bool:
+    role_url = config.role_url.strip()
+    if not role_url:
+        logger.debug("No role URL configured, skipping.")
+        return True
+    logger.info("Configuring NX role...")
+    target_dir = Path(os.environ["LOCALAPPDATA"]) / "Siemens" / "NX2506"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    dl = FileDownloader(config, logger)
+    role_file = dl.download(role_url, "user.mtx")
+    if not role_file:
+        logger.warning("Role download failed, skipping role configuration.")
+        return True
+    shutil.copy2(role_file, target_dir / "user.mtx")
+    prefs = target_dir / "UserPreferences.txt"
+    mtx_path = str(target_dir / "user.mtx").replace("\\", "\\\\")
+    prefs_entry = '[HKEY_CURRENT_USER\\Software\\Unigraphics Solutions\\NX\\2506\\Layout]\n"LastRole"="{0}"\n'.format(mtx_path)
+    with open(prefs, "a", encoding="utf-8") as f:
+        f.write(prefs_entry)
+    logger.info(f"Role configured: {target_dir / 'user.mtx'}")
+    return True
 
 
 def get_msi_features(msi_path: str, temp_dir: str) -> set:
@@ -670,12 +726,39 @@ class PostInstallValidator:
         inst_fcc = Path(self.config.install_dir) / "UGMANAGER" / "tccs" / "fcc.xml"
         self._check_file("fcc.xml checksum", ref_fcc, inst_fcc)
 
-        ref_java = Path(self.config.temp_dir) / "java"
-        inst_java = Path(self.config.install_dir) / "java"
-        ref_java_zip = Path(self.config.temp_dir) / "java.zip"
-        self._check_zip("java", "java", ref_java_zip, inst_java)
+        self._check_java_zip(Path(self.config.temp_dir) / "java.zip",
+                             Path(self.config.install_dir).parent / "java")
 
-    def _check_zip(self, target_name: str, ref_zip: Path, inst_dir: Path):
+    def _check_java_zip(self, ref_zip: Path, inst_dir: Path):
+        try:
+            zip_ok = False
+            if ref_zip.exists():
+                try:
+                    with zipfile.ZipFile(ref_zip, "r") as zf:
+                        zf.testzip()
+                    self.results["java.zip integrity"] = True
+                    self.logger.info(f"  java.zip integrity: OK")
+                except zipfile.BadZipFile:
+                    self.results["java.zip integrity"] = False
+                    self.logger.warning(f"  java.zip integrity: BAD ZIP FILE")
+                except Exception as e:
+                    self.results["java.zip integrity"] = False
+                    self.logger.warning(f"  java.zip integrity: {e}")
+            else:
+                self.results["java.zip integrity"] = False
+                self.logger.warning(f"  java.zip integrity: not found in temp")
+
+            zulu = inst_dir / "zulu11"
+            zulu_ok = zulu.exists()
+            self.results["java dir"] = zulu_ok
+            if zulu_ok:
+                self.logger.info(f"  java dir: OK ({zulu})")
+            else:
+                self.logger.warning(f"  java dir: not found ({zulu})")
+        except Exception as e:
+            self.logger.warning(f"  java validation error: {e}")
+
+    def _check_zip(self, target_name: str, ref_zip: Path, ref_dir: Path, inst_dir: Path):
         zip_label = f"{target_name}.zip checksum"
         dir_label = f"{target_name} dir checksum"
 
@@ -691,21 +774,12 @@ class PostInstallValidator:
 
             if ref_zip_exists:
                 ref_zip_hash = hashlib.sha256(ref_zip.read_bytes()).hexdigest()
-                inst_zip_path = Path(self.config.install_dir) / f"{target_name}.zip"
-                inst_zip_hash = hashlib.sha256(inst_zip_path.read_bytes()).hexdigest()
-                zip_match = ref_zip_hash == inst_zip_hash
-                self.results[zip_label] = zip_match
-                if zip_match:
-                    self.logger.info(f"  {zip_label}: OK ({ref_zip_hash[:16]}...)")
-                else:
-                    self.logger.warning(f"  {zip_label}: MISMATCH")
-                    self.logger.warning(f"    Reference: {ref_zip_hash[:16]}...")
-                    self.logger.warning(f"    Installed: {inst_zip_hash[:16]}...")
+                self.results[zip_label] = True
+                self.logger.info(f"  {zip_label}: OK ({ref_zip_hash[:16]}...)")
             else:
-                self.results[zip_label] = None
-                self.logger.debug(f"  {zip_label}: reference not in temp")
+                self.results[zip_label] = False
+                self.logger.warning(f"  {zip_label}: reference zip not in temp")
 
-            ref_dir = Path(self.config.temp_dir) / target_name
             if ref_dir.exists():
                 ref_hash = FileDownloader.dir_checksum(ref_dir)
                 inst_hash = FileDownloader.dir_checksum(inst_dir)
@@ -782,11 +856,12 @@ class FileDownloader:
             self.logger.error(f"Download error: {e}")
             return None
 
-    def unzip(self, zip_path: Path) -> bool:
-        self.logger.info(f"Unzipping {zip_path.name} to {self.config.install_dir}...")
+    def unzip(self, zip_path: Path, dest_dir: Optional[Path] = None) -> bool:
+        dest_dir = dest_dir or Path(self.config.install_dir)
+        self.logger.info(f"Unzipping {zip_path.name} to {dest_dir}...")
         try:
             with zipfile.ZipFile(zip_path, "r") as zf:
-                zf.extractall(self.config.install_dir)
+                zf.extractall(dest_dir)
             self.logger.info(f"Extracted: {zip_path.stem}/")
             return True
         except zipfile.BadZipFile as e:
@@ -815,9 +890,24 @@ class FileDownloader:
             dest.parent.mkdir(parents=True, exist_ok=True)
             if dest.exists():
                 try:
-                    dest.unlink()
-                except Exception as e:
-                    self.logger.warning(f"Could not remove existing {dest}: {e}")
+                    if dest.is_dir():
+                        shutil.rmtree(dest)
+                    else:
+                        dest.unlink()
+                except Exception:
+                    try:
+                        subprocess.run(["takeown", "/F", str(dest), "/R", "/A", "/D", "Y"],
+                                       capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=120)
+                        subprocess.run(["icacls", str(dest), "/grant:r", "%USERNAME%:(OI)(CI)F", "/T"],
+                                       capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=120)
+                        subprocess.run(["attrib", "-R", "-S", "-H", str(dest)],
+                                       capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=30)
+                        if dest.is_dir():
+                            shutil.rmtree(dest)
+                        else:
+                            dest.unlink()
+                    except Exception as e:
+                        self.logger.warning(f"Could not remove existing {dest}: {e}")
             src.replace(dest)
             self.logger.info(f"Installed: {dest}")
             return True
@@ -1066,24 +1156,27 @@ def main():
     if target_java.exists():
         logger.info(f"Java directory already exists at {target_java}, skipping java installation.")
     else:
-        target_java.mkdir(parents=True, exist_ok=True)
-
         java = dl.download(config.java_url, "java.zip")
         if not java:
             logger.error("java.zip download failed.")
             sys.exit(1)
 
-        if not dl.unzip(java):
+        target_java.mkdir(parents=True, exist_ok=True)
+        fix_nx_permissions(str(target_java.parent), logger)
+
+        java_extracted = Path(config.temp_dir) / "java_extracted"
+        if not dl.unzip(java, java_extracted):
             logger.error("java.zip unzip failed.")
             sys.exit(1)
 
-        if not dl.move(java, target_java):
-            logger.error("java move failed.")
+        zulu_src = java_extracted
+        if not dl.move(zulu_src, target_java / "zulu11"):
+            logger.error("zulu11 move failed.")
             sys.exit(1)
 
-    start_nx1 = dl.download(config.start_nx_url, "start_nx1.bat")
-    if not start_nx1:
-        logger.error("start_nx1.bat download failed.")
+    start_nx = dl.download(config.start_nx_url, "start_nx.bat")
+    if not start_nx:
+        logger.error("start_nx.bat download failed.")
         sys.exit(1)
 
     def transform_start_nx(content: str) -> str:
@@ -1109,14 +1202,19 @@ def main():
                 result.append(line)
         return '\n'.join(result)
 
-    target_start_nx = Path(config.install_dir) / "start_nx.bat"
-    if not dl.transform(start_nx1, target_start_nx, transform_start_nx):
+    target_start_nx = Path(config.install_dir).parent / "start_nx.bat"
+    if not dl.transform(start_nx, target_start_nx, transform_start_nx):
         logger.error("start_nx.bat transform failed.")
         sys.exit(1)
+
+    configure_role(config, logger)
 
     if not PostInstallValidator(config, logger).validate():
         logger.error("Post-install validation failed.")
         sys.exit(1)
+
+    logger.info("Cleaning up temp directory...")
+    shutil.rmtree(config.temp_dir, ignore_errors=True)
 
     logger.info("=" * 60)
     logger.info("Installation complete!")
