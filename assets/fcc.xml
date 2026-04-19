@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fccconfig SYSTEM "fccconfig.dtd">
+
+<!--
+bcprt
+This software and related documentation are proprietary to UGS Corp.
+COPYRIGHT 2007 UGS CORP.  ALL RIGHTS RESERVED
+ecprt
+-->
+
+<fccconfig version="1.3.2">
+   <fccdefaults>
+
+      <!-- general -->
+      <!-- <property name="FCC_LogFile" value="$HOME\fcc.log|/tmp/$USER/fcc.log" overridable="true"/> -->
+      <!-- <property name="FCC_LogLevel" value="WARNING" overridable="true"/> -->
+      <!-- <property name="FCC_TraceLevel" value="" overridable="true"/> -->
+      <!-- <property name="FCC_MaxWANSources" value="10" overridable="true"/> -->
+      <!-- <property name="FCC_WANThreshold" value="256K" overridable="true"/> -->
+      <!-- <property name="FCC_WANChunkSize" value="256K" overridable="true"/> -->
+      <!-- <property name="FCC_ProxyPipeName" value="\\.\pipe\FMSClientPipe|/tmp/FMSClientPipe" overridable="true"/> -->
+      <!-- <property name="FCC_FSCConnectionRetryInterval" value="5000" overridable="true"/> -->
+      <!-- <property name="FCC_StatusFrequency" value="1000" overridable="true"/> -->
+      <!-- These two parameters are very similar, and in most cases should be toggled together. -->
+      <!-- They control which FSC servers an FCC uses to access data files. -->
+      <!-- <property name="FCC_EnableDirectFSCRouting" value="true" overridable="true"/> -->
+      <!-- <property name="FCC_TransientFileFSCSource" value="ticketuri" overridable="true"/> -->
+      <!-- As of Teamcenter 9.0, FCC_IdleTimeoutMinutes is deprecated, and will be ignored. -->
+      <!--   Please use the TCCS container timeout for FCC idle shutdown functionality.     -->
+
+      <!-- This parameter is for background task processing, not for idle timeout. -->
+      <!-- <property name="FCC_MinimumBackgroundIdleTimeSeconds" value="5" overridable="true"/> -->
+      <!-- <property name="FCC_MaxBackgroundRetries" value="3" overridable="true"/> -->
+
+      <!-- common cache --> 
+      <!-- <property name="FCC_CacheLocation" value="$HOME\FCCCache|/tmp/FCCCache" overridable="true"/> -->
+
+      <!-- whole file cache  -->
+      <!-- <property name="FCC_CacheTableHashSize" value="1000" overridable="true"/> -->
+      <!-- <property name="FCC_MaxWriteCacheSize" value="1G" overridable="true"/> -->
+      <!-- <property name="FCC_MaxReadCacheSize" value="1G" overridable="true"/> -->
+      <!-- <property name="FCC_MinimumReadCacheAgeMinutes" value="240" overridable="true"/> -->
+      <!-- <property name="FCC_MinimumWriteCacheAgeMinutes" value="10" overridable="true"/> -->
+      <!-- <property name="FCC_MaximumReadCacheAge" value="180" overridable="true"/> -->
+      <!-- <property name="FCC_MaximumWriteCacheAge" value="180" overridable="true"/> -->
+      <!-- <property name="FCC_ReadCachePurgeSizePercentage" value="25" overridable="true"/> -->
+      <!-- <property name="FCC_WriteCachePurgeSizePercentage" value="25" overridable="true"/> -->
+      <!-- <property name="FCC_WholeFileCacheSubdirectories" value="30" overridable="true"/> -->
+
+      <!-- segment cache  -->
+      <!-- <property name="FCC_MaximumNumberOfFilePages" value="40960" overridable="true"/> -->
+      <!-- <property name="FCC_MaximumNumberOfSegments" value="512" overridable="true"/> -->
+      <!-- <property name="FCC_HashBlockPages" value="2048" overridable="true"/> -->
+      <!-- <property name="FCC_MaxExtentFiles" value="32" overridable="true"/> -->
+      <!-- <property name="FCC_MaxExtentFileSizeMegabytes" value="16" overridable="true"/> -->
+
+      <!-- data validation -->
+      <!-- <property name="FCC_UploadDigestAlgorithm" value="None" overridable="true" /> -->
+      <!-- <property name="FCC_DownloadDigestAlgorithm" value="None" overridable="true" /> -->
+
+      <!-- external site access definition -->
+      <!-- <site id="013B998A65427E" overridable="true"> -->
+         <!-- <parentfsc address="localhost:4567" priority="0"/> -->
+         <!-- <parentfsc address="myserverhost:4444" priority="1"/> -->
+         <!-- <assignment mode="parentfsc" /> -->
+      <!-- </site> -->
+
+   </fccdefaults>
+
+   <!-- default parentfsc - this is a marker that will be overwritten by the installer -->
+   <parentfsc address="http://10.10.220.12:4544/" priority="0" transport="lan"/>
+    
+
+</fccconfig>

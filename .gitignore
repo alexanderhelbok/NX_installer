@@ -1,0 +1,5 @@
+AGENTS.md
+__pycache__
+
+WARNING  Could not remove existing C:\Apps\NX\UGMANAGER\tccs\fcc.xml: [WinError 5] Access is denied: 'C:\\Apps\\NX\\UGMANAGER\\tccs\\fcc.xml'
+ERROR  Move error: [WinError 5] Access is denied: 'C:\\Temp\\NXInstall\\fcc.xml' -> 'C:\\Apps\\NX\\UGMANAGER\\tccs\\fcc.xml'
