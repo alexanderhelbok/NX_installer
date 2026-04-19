@@ -1223,7 +1223,7 @@ def main():
         username = f"{name}.{surname}"
         password = f"{name}00"
         install_dir = config.install_dir.rstrip("\\")
-        java_home = str(Path(install_dir) / "java" / "zulu11")
+        java_home = str(Path(install_dir).parent / "java" / "zulu11")
         result = []
         for line in content.splitlines():
             if line.startswith("set JAVA_HOME="):
