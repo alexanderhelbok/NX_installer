@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SIMP_InstallationData xmlns="http://www.plm.automation.siemens.com/simp/2.0">
+  <INSTALLDIR><![CDATA[C:\Program Files\Siemens\NX2506]]></INSTALLDIR>
+
+  <PROPERTY name="LMI_LICENSE_SERVER"><![CDATA[28000@10.10.220.13]]></PROPERTY>
+
+  <PROPERTY name="INSTALL_TYPE"><![CDATA[CUSTOM]]></PROPERTY>
+
+  <PROPERTY name="PRODUCT_SELECTION"><![CDATA[true]]></PROPERTY>
+
+  <PROPERTY name="SITE_NAME"><![CDATA[Default Site]]></PROPERTY>
+
+  <FEATURE id="NX-1953" selected="false">
+    <DESCRIPTION><![CDATA[Siemens NX CAD Core]]></DESCRIPTION>
+  </FEATURE>
+  <FEATURE id="NX-1959" selected="false">
+    <DESCRIPTION><![CDATA[Siemens NX Manufacturing]]></DESCRIPTION>
+  </FEATURE>
+  <FEATURE id="NX-1962" selected="false">
+    <DESCRIPTION><![CDATA[Siemens NX Simulation]]></DESCRIPTION>
+  </FEATURE>
+  <FEATURE id="NX-1967" selected="false">
+    <DESCRIPTION><![CDATA[Siemens NX Routing]]></DESCRIPTION>
+  </FEATURE>
+  <FEATURE id="NX-1969" selected="false">
+    <DESCRIPTION><![CDATA[Siemens NX PMI / MBD]]></DESCRIPTION>
+  </FEATURE>
+
+  <PROPERTY name="UGII_BASE_DIR"><![CDATA[C:\Program Files\Siemens\NX2506\UGII]]></PROPERTY>
+
+  <PROPERTY name="SET_NETWORK_LICENSE"><![CDATA[true]]></PROPERTY>
+
+  <PROPERTY name="NX_LICENSE_SERVER"><![CDATA[27000@YOUR_SLS_HOSTNAME]]></PROPERTY>
+
+  <PROPERTY name="ENABLE_FILE_LOCKING"><![CDATA[false]]></PROPERTY>
+
+  <PROPERTY name="INSTALL_SHORTCUTS"><![CDATA[false]]></PROPERTY>
+
+  <PROPERTY name="REGISTRY_BACKUP"><![CDATA[true]]></PROPERTY>
+
+  <SILENT_INSTALL><![CDATA[true]]></SILENT_INSTALL>
+  <NO_REBOOT><![CDATA[true]]></NO_REBOOT>
+</SIMP_InstallationData>
