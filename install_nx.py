@@ -229,6 +229,7 @@ class Config:
         self.java_url = cp.get("downloads", "java_url").strip()
         self.start_nx_url = cp.get("downloads", "start_nx_url").strip()
         self.role_url = cp.get("downloads", "role_url", fallback="").strip()
+        self.dpv_url = cp.get("downloads", "dpv_url", fallback="").strip()
         self.log_level = cp.get("logging", "log_level", fallback="INFO").strip()
         self.install_timeout = cp.getint("timeouts", "install_timeout_seconds", fallback=5400)
 
@@ -476,24 +477,36 @@ def fix_nx_permissions(install_dir: str, logger: logging.Logger, timeout: int = 
 
 def configure_role(config: Config, logger: logging.Logger) -> bool:
     role_url = config.role_url.strip()
-    if not role_url:
-        logger.debug("No role URL configured, skipping.")
+    dpv_url = config.dpv_url.strip()
+    if not role_url and not dpv_url:
+        logger.debug("No role/dpv URL configured, skipping.")
         return True
-    logger.info("Configuring NX role...")
+    logger.info("Configuring NX role and preferences...")
     target_dir = Path(os.environ["LOCALAPPDATA"]) / "Siemens" / "NX2506"
     target_dir.mkdir(parents=True, exist_ok=True)
     dl = FileDownloader(config, logger)
-    role_file = dl.download(role_url, "user.mtx")
-    if not role_file:
-        logger.warning("Role download failed, skipping role configuration.")
-        return True
-    shutil.copy2(role_file, target_dir / "user.mtx")
-    prefs = target_dir / "UserPreferences.txt"
-    mtx_path = str(target_dir / "user.mtx").replace("\\", "\\\\")
-    prefs_entry = '[HKEY_CURRENT_USER\\Software\\Unigraphics Solutions\\NX\\2506\\Layout]\n"LastRole"="{0}"\n'.format(mtx_path)
-    with open(prefs, "a", encoding="utf-8") as f:
-        f.write(prefs_entry)
-    logger.info(f"Role configured: {target_dir / 'user.mtx'}")
+
+    if role_url:
+        role_file = dl.download(role_url, "user.mtx")
+        if role_file:
+            shutil.copy2(role_file, target_dir / "user.mtx")
+            prefs = target_dir / "UserPreferences.txt"
+            mtx_path = str(target_dir / "user.mtx").replace("\\", "\\\\")
+            prefs_entry = '[HKEY_CURRENT_USER\\Software\\Unigraphics Solutions\\NX\\2506\\Layout]\n"LastRole"="{0}"\n'.format(mtx_path)
+            with open(prefs, "a", encoding="utf-8") as f:
+                f.write(prefs_entry)
+            logger.info(f"Role configured: {target_dir / 'user.mtx'}")
+        else:
+            logger.warning("Role download failed, skipping.")
+
+    if dpv_url:
+        dpv_file = dl.download(dpv_url, "NX_user.dpv")
+        if dpv_file:
+            shutil.copy2(dpv_file, target_dir / "NX_user.dpv")
+            logger.info(f"Preferences configured: {target_dir / 'NX_user.dpv'}")
+        else:
+            logger.warning("dpv download failed, skipping.")
+
     return True
 
 
