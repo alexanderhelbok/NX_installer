@@ -96,7 +96,7 @@ FEATURE_MAP = {
 DEFAULT_FEATURES = {
     "FEAT_NXPLATFORM", "FEAT_PROGRAMMING_TOOLS", "FEAT_COMPOSITES",
     "FEAT_MECHATRONICS", "FEAT_SIMULATION", "FEAT_NXNASTRAN",
-    "FEAT_TRANSLATORS", "FEAT_STUDIO_RENDER",
+    "FEAT_TRANSLATORS", "FEAT_STUDIO_RENDER", "FEAT_CORE"
 }
 
 
@@ -197,9 +197,13 @@ def get_free_disk_space(path: str) -> int:
     return free_bytes.value
 
 
-def wait_for_process(proc: subprocess.Popen, logger: logging.Logger, timeout: int, poll_interval: int = 30) -> int:
+def wait_for_process(proc: subprocess.Popen, logger: logging.Logger, timeout: int, poll_interval: int = 30, cancel_event=None) -> int:
     start = time.time()
     while True:
+        if cancel_event and cancel_event.is_set():
+            logger.warning("Cancellation requested, terminating process...")
+            proc.kill()
+            return -1
         retcode = proc.poll()
         if retcode is not None:
             return retcode
@@ -223,8 +227,8 @@ class Config:
         self.install_vcpp = cp.getboolean("prerequisites", "install_vcpp", fallback=True)
         self.install_dotnet = cp.getboolean("prerequisites", "install_dotnet", fallback=True)
         self.license_server = cp.get("license", "splm_license_server").strip()
-        self.name = cp.get("user", "name", fallback="").strip()
-        self.surname = cp.get("user", "surname", fallback="").strip()
+        self.name = cp.get("user", "name", fallback="").strip().lower()
+        self.surname = cp.get("user", "surname", fallback="").strip().lower()
         self.fcc_url = cp.get("downloads", "fcc_url").strip()
         self.java_url = cp.get("downloads", "java_url").strip()
         self.start_nx_url = cp.get("downloads", "start_nx_url").strip()
@@ -271,15 +275,17 @@ class PrerequisitesInstaller:
             elif "windowsdesktop-runtime" in ln and ln.endswith(".exe"):
                 self._found_desktop_runtime = str(p)
 
-    def _run(self, path: str, args: list, timeout: int, label: str) -> bool:
+    def _run(self, path: str, args: list, timeout: int, label: str, cancel_event=None) -> bool:
         if not Path(path).exists():
             self.logger.warning(f"{label} installer not found: {path}")
+            return False
+        if cancel_event and cancel_event.is_set():
             return False
         self.logger.info(f"Installing {label}...")
         try:
             proc = subprocess.Popen([path] + args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                     creationflags=subprocess.CREATE_NO_WINDOW)
-            retcode = wait_for_process(proc, self.logger, timeout, poll_interval=10)
+            retcode = wait_for_process(proc, self.logger, timeout, poll_interval=10, cancel_event=cancel_event)
             ok = retcode in (0, 1638, 3010)
             self.logger.info(f"{label}: {'OK' if ok else f'warning (exit {retcode})'}")
             return ok
@@ -327,7 +333,9 @@ class PrerequisitesInstaller:
         except Exception:
             return False
 
-    def _do_vcpp(self) -> bool:
+    def _do_vcpp(self, cancel_event=None) -> bool:
+        if cancel_event and cancel_event.is_set():
+            return False
         if self._check_vcpp():
             self.logger.info("VC++ 2015-2022 Redistributable already present, skipping.")
             return True
@@ -341,9 +349,11 @@ class PrerequisitesInstaller:
                 except Exception as e:
                     self.logger.error(f"Failed to download VC++ redist: {e}")
                     return False
-        return self._run(path, ["/install", "/quiet", "/norestart"], 300, "VC++ Redistributable")
+        return self._run(path, ["/install", "/quiet", "/norestart"], 300, "VC++ Redistributable", cancel_event=cancel_event)
 
-    def _do_dotnet48(self) -> bool:
+    def _do_dotnet48(self, cancel_event=None) -> bool:
+        if cancel_event and cancel_event.is_set():
+            return False
         if self._check_dotnet48():
             self.logger.info(".NET Framework 4.8 already present, skipping.")
             return True
@@ -357,14 +367,16 @@ class PrerequisitesInstaller:
                 except Exception as e:
                     self.logger.error(f"Failed to download .NET 4.8: {e}")
                     return False
-        return self._run(path, ["/quiet", "/norestart"], 600, ".NET 4.8")
+        return self._run(path, ["/quiet", "/norestart"], 600, ".NET 4.8", cancel_event=cancel_event)
 
-    def install_webview2(self) -> bool:
+    def install_webview2(self, cancel_event=None) -> bool:
+        if cancel_event and cancel_event.is_set():
+            return False
         if self._check_webview2():
             self.logger.info("WebView2 Runtime already installed, skipping.")
             return True
         if self._found_webview2:
-            return self._run(self._found_webview2, ["--do-not-launch-edge"], 300, "WebView2 Runtime")
+            return self._run(self._found_webview2, ["--do-not-launch-edge"], 300, "WebView2 Runtime", cancel_event=cancel_event)
         return True
 
     def _check_webview2(self) -> bool:
@@ -379,23 +391,29 @@ class PrerequisitesInstaller:
                 pass
         return False
 
-    def install_aspnetcore(self) -> bool:
+    def install_aspnetcore(self, cancel_event=None) -> bool:
+        if cancel_event and cancel_event.is_set():
+            return False
         if self._found_aspnetcore:
-            return self._run(self._found_aspnetcore, ["/quiet", "/norestart"], 300, "ASP.NET Core Runtime")
+            return self._run(self._found_aspnetcore, ["/quiet", "/norestart"], 300, "ASP.NET Core Runtime", cancel_event=cancel_event)
         return True
 
-    def install_desktop_runtime(self) -> bool:
+    def install_desktop_runtime(self, cancel_event=None) -> bool:
+        if cancel_event and cancel_event.is_set():
+            return False
         if self._found_desktop_runtime:
-            return self._run(self._found_desktop_runtime, ["/quiet", "/norestart"], 300, "Windows Desktop Runtime")
+            return self._run(self._found_desktop_runtime, ["/quiet", "/norestart"], 300, "Windows Desktop Runtime", cancel_event=cancel_event)
         return True
 
-    def install_all(self) -> bool:
+    def install_all(self, cancel_event=None) -> bool:
         ok = True
         for impl in [
             self._do_vcpp, self._do_dotnet48,
             self.install_webview2, self.install_aspnetcore, self.install_desktop_runtime,
         ]:
-            if not impl():
+            if cancel_event and cancel_event.is_set():
+                return False
+            if not impl(cancel_event=cancel_event):
                 ok = False
         return ok
 
@@ -419,38 +437,109 @@ def _check_registry_install(product_code: str) -> tuple[bool, Optional[str]]:
     return False, None
 
 
-def get_msi_installed_location(product_code: str) -> Optional[str]:
+def get_msi_installed_location(product_code: Optional[str] = None) -> Optional[str]:
+    if product_code is None:
+        product_code = find_installed_nx_product_code() or MSI_PRODUCT_CODE
     _, loc = _check_registry_install(product_code)
     return loc
 
 
-def is_nx_installed(product_code: str = MSI_PRODUCT_CODE) -> bool:
+def is_nx_installed(product_code: Optional[str] = None) -> bool:
+    if product_code is None:
+        product_code = find_installed_nx_product_code() or MSI_PRODUCT_CODE
     installed, _ = _check_registry_install(product_code)
     return installed
 
 
-def uninstall_nx(product_code: str, logger: logging.Logger, timeout: int = 600) -> bool:
+def find_installed_nx_product_code(logger: Optional[logging.Logger] = None) -> Optional[str]:
+    UNINSTALL_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    for view in [winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY]:
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, UNINSTALL_KEY, 0, winreg.KEY_READ | view) as key:
+                i = 0
+                while True:
+                    try:
+                        subkey_name = winreg.EnumKey(key, i)
+                        i += 1
+                        try:
+                            with winreg.OpenKey(key, subkey_name) as sk:
+                                try:
+                                    name, _ = winreg.QueryValueEx(sk, "DisplayName")
+                                    if "Siemens NX" in name:
+                                        if logger:
+                                            logger.debug(f"Found installed NX: {subkey_name} ({name})")
+                                        return subkey_name
+                                except FileNotFoundError:
+                                    pass
+                        except Exception:
+                            pass
+                    except OSError:
+                        break
+        except Exception:
+            pass
+    return None
+
+
+def cleanup_nx_artifacts(config: 'Config', logger: logging.Logger) -> bool:
+    parent = Path(config.install_dir).parent
+    logger.info(f"Cleaning up NX artifacts under {parent}...")
+    ok = True
+    for path in [
+        parent / "start_nx.bat",
+        parent / "java",
+        Path(config.install_dir),
+    ]:
+        if not path.exists():
+            continue
+        try:
+            fix_nx_permissions(str(path), logger)
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink(missing_ok=True)
+            logger.info(f"Removed: {path}")
+        except Exception as e:
+            logger.warning(f"Could not remove {path}: {e}")
+            ok = False
+    if parent.exists():
+        try:
+            remaining = list(parent.iterdir())
+            if not remaining:
+                parent.rmdir()
+                logger.info(f"Removed empty directory: {parent}")
+        except Exception:
+            pass
+    return ok
+
+
+def uninstall_nx(product_code: Optional[str] = None, logger: logging.Logger = None, timeout: int = 600, config=None) -> bool:
+    if product_code is None:
+        product_code = find_installed_nx_product_code(logger) or MSI_PRODUCT_CODE
     logger.info("Uninstalling existing NX installation...")
     log_path = Path(os.environ.get("TEMP", "C:\\Temp")) / "nx_uninstall.log"
     cmd = ["msiexec.exe", "/x", product_code, "/qn", "/norestart", "/l*v", str(log_path)]
     logger.info(f"Command: {' '.join(cmd[:3])} ...")
+    success = False
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 creationflags=subprocess.CREATE_NO_WINDOW)
         retcode = wait_for_process(proc, logger, timeout)
         if retcode in (0, 3010):
             logger.info("Uninstall completed successfully.")
-            return True
-        logger.error(f"Uninstall failed with exit code: {retcode}")
-        if log_path.exists():
-            with open(log_path, encoding="utf-8", errors="ignore") as f:
-                for line in f.read().splitlines()[-20:]:
-                    if line.strip():
-                        logger.debug(f"  {line}")
-        return False
+            success = True
+        else:
+            logger.error(f"Uninstall failed with exit code: {retcode}")
+            if log_path.exists():
+                with open(log_path, encoding="utf-8", errors="ignore") as f:
+                    for line in f.read().splitlines()[-20:]:
+                        if line.strip():
+                            logger.debug(f"  {line}")
     except Exception as e:
         logger.error(f"Uninstall error: {e}")
-        return False
+
+    if config:
+        cleanup_nx_artifacts(config, logger)
+    return success
 
 
 def fix_nx_permissions(install_dir: str, logger: logging.Logger, timeout: int = 120) -> bool:
@@ -476,7 +565,7 @@ def fix_nx_permissions(install_dir: str, logger: logging.Logger, timeout: int = 
         return False
 
 
-def configure_role(config: Config, logger: logging.Logger) -> bool:
+def configure_role(config: Config, logger: logging.Logger, nx_version: str, cancel_event=None) -> bool:
     role_url = config.role_url.strip()
     dpv_url = config.dpv_url.strip()
     fcg_url = config.fcg_url.strip()
@@ -484,33 +573,48 @@ def configure_role(config: Config, logger: logging.Logger) -> bool:
         logger.debug("No role/dpv/fcg URL configured, skipping.")
         return True
     logger.info("Configuring NX role and preferences...")
-    target_dir = Path(os.environ["LOCALAPPDATA"]) / "Siemens" / "NX2506"
+    target_dir = Path(os.environ["LOCALAPPDATA"]) / "Siemens" / f"NX{nx_version}"
     target_dir.mkdir(parents=True, exist_ok=True)
     dl = FileDownloader(config, logger)
 
+    if cancel_event and cancel_event.is_set():
+        return False
+
     if role_url:
-        role_file = dl.download(role_url, "user.mtx")
+        role_file = dl.download(role_url, "user.mtx", cancel_event=cancel_event)
+        if cancel_event and cancel_event.is_set():
+            return False
         if role_file:
             shutil.copy2(role_file, target_dir / "user.mtx")
             prefs = target_dir / "UserPreferences.txt"
             mtx_path = str(target_dir / "user.mtx").replace("\\", "\\\\")
-            prefs_entry = '[HKEY_CURRENT_USER\\Software\\Unigraphics Solutions\\NX\\2506\\Layout]\n"LastRole"="{0}"\n'.format(mtx_path)
+            prefs_entry = f'[HKEY_CURRENT_USER\\Software\\Unigraphics Solutions\\NX\\{nx_version}\\Layout]\n"LastRole"="{mtx_path}"\n'
             with open(prefs, "a", encoding="utf-8") as f:
                 f.write(prefs_entry)
             logger.info(f"Role configured: {target_dir / 'user.mtx'}")
         else:
             logger.warning("Role download failed, skipping.")
 
+    if cancel_event and cancel_event.is_set():
+        return False
+
     if dpv_url:
-        dpv_file = dl.download(dpv_url, "NX_user.dpv")
+        dpv_file = dl.download(dpv_url, "NX_user.dpv", cancel_event=cancel_event)
+        if cancel_event and cancel_event.is_set():
+            return False
         if dpv_file:
             shutil.copy2(dpv_file, target_dir / "NX_user.dpv")
             logger.info(f"Preferences configured: {target_dir / 'NX_user.dpv'}")
         else:
             logger.warning("dpv download failed, skipping.")
 
+    if cancel_event and cancel_event.is_set():
+        return False
+
     if fcg_url:
-        fcg_file = dl.download(fcg_url, "feature_toggle_user.fcg")
+        fcg_file = dl.download(fcg_url, "feature_toggle_user.fcg", cancel_event=cancel_event)
+        if cancel_event and cancel_event.is_set():
+            return False
         if fcg_file:
             shutil.copy2(fcg_file, target_dir / "feature_toggle_user.fcg")
             logger.info(f"Feature toggle configured: {target_dir / 'feature_toggle_user.fcg'}")
@@ -550,29 +654,108 @@ def get_msi_features(msi_path: str, temp_dir: str) -> set:
             pass
 
 
+def find_msi(install_files: str) -> Optional[str]:
+    for p in [
+        Path(install_files) / "nx" / "SiemensNX.msi",
+        Path(install_files) / "SiemensNX.msi",
+    ]:
+        if p.exists():
+            return str(p)
+    for p in Path(install_files).rglob("SiemensNX.msi"):
+        return str(p)
+    return None
+
+
+def get_msi_product_version(msi_path: str, temp_dir: str) -> Optional[str]:
+    vbs = textwrap.dedent(f"""\
+        Set msi = CreateObject("WindowsInstaller.Installer")
+        Set db = msi.OpenDatabase("{msi_path}", 0)
+        Set view = db.OpenView("SELECT Value FROM Property WHERE Property='ProductVersion'")
+        view.Execute
+        Set rec = view.Fetch
+        If Not rec Is Nothing Then
+            WScript.Echo rec.StringData(1)
+        End If
+        view.Close
+    """)
+    tmp = Path(temp_dir) / "get_msi_version.vbs"
+    try:
+        tmp.write_text(vbs, encoding="utf-16le")
+        result = subprocess.run(
+            ["cscript", "//Nologo", "//E:vbscript", str(tmp)],
+            capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        return result.stdout.strip() or None
+    except Exception:
+        return None
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def parse_nx_short_version(version_str: str) -> str:
+    parts = version_str.split(".")
+    if len(parts) >= 2 and len(parts[0]) <= 2 and len(parts[1]) == 2:
+        return parts[0] + parts[1]
+    return parts[0] if version_str else version_str
+
+
+def get_msi_product_code(msi_path: str, temp_dir: str) -> Optional[str]:
+    vbs = textwrap.dedent(f"""\
+        Set msi = CreateObject("WindowsInstaller.Installer")
+        Set db = msi.OpenDatabase("{msi_path}", 0)
+        Set view = db.OpenView("SELECT Value FROM Property WHERE Property='ProductCode'")
+        view.Execute
+        Set rec = view.Fetch
+        If Not rec Is Nothing Then
+            WScript.Echo rec.StringData(1)
+        End If
+        view.Close
+    """)
+    tmp = Path(temp_dir) / "get_msi_pcode.vbs"
+    try:
+        tmp.write_text(vbs, encoding="utf-16le")
+        result = subprocess.run(
+            ["cscript", "//Nologo", "//E:vbscript", str(tmp)],
+            capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        return result.stdout.strip() or None
+    except Exception:
+        return None
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 class NXInstaller:
     def __init__(self, config: Config, logger: logging.Logger):
         self.config = config
         self.logger = logger
-        self._find_msi()
+        self.nx_version = ""
+        self.msi_product_code = ""
+        self.msi_path = find_msi(config.install_files)
+        if not self.msi_path:
+            raise FileNotFoundError(f"SiemensNX.msi not found in {config.install_files}")
+        self.logger.info(f"Found MSI: {self.msi_path}")
+        raw_version = get_msi_product_version(self.msi_path, config.temp_dir)
+        if raw_version:
+            self.nx_version = parse_nx_short_version(raw_version)
+            self.logger.info(f"Detected NX version: {self.nx_version} (from MSI ProductVersion: {raw_version})")
+        else:
+            self.logger.warning("Could not detect NX version from MSI, will attempt fallback.")
+        raw_pcode = get_msi_product_code(self.msi_path, config.temp_dir)
+        if raw_pcode:
+            self.msi_product_code = raw_pcode
+            self.logger.debug(f"MSI ProductCode: {self.msi_product_code}")
+        else:
+            self.logger.warning("Could not read ProductCode from MSI, using fallback.")
 
     def _get_msi_features(self) -> set:
         return get_msi_features(self.msi_path, self.config.temp_dir)
-
-    def _find_msi(self):
-        for p in [
-            Path(self.config.install_files) / "nx" / "SiemensNX.msi",
-            Path(self.config.install_files) / "SiemensNX.msi",
-        ]:
-            if p.exists():
-                self.msi_path = str(p)
-                self.logger.info(f"Found MSI: {self.msi_path}")
-                return
-        for p in Path(self.config.install_files).rglob("SiemensNX.msi"):
-            self.msi_path = str(p)
-            self.logger.info(f"Found MSI: {self.msi_path}")
-            return
-        raise FileNotFoundError(f"SiemensNX.msi not found in {self.config.install_files}")
 
     def _check_disk(self) -> bool:
         drive = Path(self.config.install_dir).drive or Path(self.config.install_dir).anchor
@@ -596,14 +779,16 @@ class NXInstaller:
         except Exception:
             pass
 
-    def install(self, features: list) -> bool:
+    def install(self, features: list, cancel_event=None) -> bool:
+        if cancel_event and cancel_event.is_set():
+            return False
         self.logger.info("=" * 60)
-        self.logger.info("Starting NX2506 Installation")
+        self.logger.info(f"Starting NX{self.nx_version} Installation")
         self.logger.info("=" * 60)
 
-        if is_nx_installed():
-            self.logger.warning("NX 2506 is already installed. Use --uninstall first to reinstall.")
-            self.logger.warning(f"Existing install location: {get_msi_installed_location(MSI_PRODUCT_CODE)}")
+        if is_nx_installed(self.msi_product_code or None):
+            self.logger.warning(f"NX is already installed. Use --uninstall first to reinstall.")
+            self.logger.warning(f"Existing install location: {get_msi_installed_location(self.msi_product_code or None)}")
             return False
 
         if not self._check_disk():
@@ -614,7 +799,7 @@ class NXInstaller:
             prereq = PrerequisitesInstaller(self.config.install_files, self.logger,
                                            self.config.install_vcpp, self.config.install_dotnet,
                                            self.config.temp_dir)
-            prereq.install_all()
+            prereq.install_all(cancel_event=cancel_event)
             self.logger.info("Prerequisites processed.")
 
         self.logger.info("-" * 40)
@@ -663,7 +848,7 @@ class NXInstaller:
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                     env=env, creationflags=subprocess.CREATE_NO_WINDOW)
-            retcode = wait_for_process(proc, self.logger, self.config.install_timeout)
+            retcode = wait_for_process(proc, self.logger, self.config.install_timeout, cancel_event=cancel_event)
 
             self._read_msi_log(str(log_path))
 
@@ -706,9 +891,10 @@ class LicenseConfigurator:
 
 
 class PostInstallValidator:
-    def __init__(self, config: Config, logger: logging.Logger):
+    def __init__(self, config: Config, logger: logging.Logger, nx_version: str = ""):
         self.config = config
         self.logger = logger
+        self.nx_version = nx_version
         self.results: dict = {}
 
     def validate(self) -> bool:
@@ -772,7 +958,7 @@ class PostInstallValidator:
                 self.results["java.zip integrity"] = False
                 self.logger.warning(f"  java.zip integrity: not found in temp")
 
-            zulu = inst_dir / "zulu11"
+            zulu = inst_dir / "zulu17"
             zulu_ok = zulu.exists()
             self.results["java dir"] = zulu_ok
             if zulu_ok:
@@ -783,7 +969,7 @@ class PostInstallValidator:
             self.logger.warning(f"  java validation error: {e}")
 
     def _check_nx_prefs(self):
-        prefs_dir = Path(os.environ["LOCALAPPDATA"]) / "Siemens" / "NX2506"
+        prefs_dir = Path(os.environ["LOCALAPPDATA"]) / "Siemens" / f"NX{self.nx_version}"
         for filename in ["user.mtx", "NX_user.dpv", "feature_toggle_user.fcg"]:
             path = prefs_dir / filename
             exists = path.exists()
@@ -870,26 +1056,104 @@ class FileDownloader:
         self.config = config
         self.logger = logger
 
-    def download(self, url: str, filename: str) -> Optional[Path]:
+    @staticmethod
+    def _parse_gdrive_id(url: str) -> Optional[str]:
+        patterns = [
+            r"/file/d/([^/]+)",
+            r"[?&]id=([^&]+)",
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, url)
+            if m:
+                return m.group(1)
+        return None
+
+    def _download_from_gdrive(self, file_id: str, dest: Path, progress_callback=None, cancel_event=None) -> bool:
+        self.logger.info(f"Downloading from Google Drive (file ID: {file_id[:12]}...)")
+        try:
+            import gdown
+        except ImportError:
+            self.logger.error("gdown not installed. Run: pip install gdown")
+            return False
+
+        if cancel_event and cancel_event.is_set():
+            return False
+
+        def _gdown_progress(downloaded, total):
+            if cancel_event and cancel_event.is_set():
+                raise KeyboardInterrupt("Download cancelled")
+            if progress_callback:
+                progress_callback(dest.name, downloaded, total or 0)
+
+        try:
+            result = gdown.download(id=file_id, output=str(dest), quiet=True, progress=_gdown_progress)
+            if result is None:
+                self.logger.error("Google Drive download failed (gdown returned None)")
+                if dest.exists():
+                    dest.unlink(missing_ok=True)
+                return False
+            if not dest.exists() or dest.stat().st_size == 0:
+                self.logger.error("Google Drive download produced empty file")
+                return False
+            return True
+        except Exception as e:
+            self.logger.error(f"Google Drive download failed: {e}")
+            if dest.exists():
+                dest.unlink(missing_ok=True)
+            return False
+
+    @staticmethod
+    def _write_stream(resp, dest: Path, chunk_size: int = 65536, progress_callback=None, cancel_event=None):
+        total = int(resp.headers.get("Content-Length", 0))
+        downloaded = 0
+        with open(dest, "wb") as f:
+            while True:
+                if cancel_event and cancel_event.is_set():
+                    raise KeyboardInterrupt("Download cancelled")
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if progress_callback and total:
+                    progress_callback(dest.name, downloaded, total)
+
+    def download(self, url: str, filename: str, progress_callback=None, cancel_event=None) -> Optional[Path]:
         Path(self.config.temp_dir).mkdir(parents=True, exist_ok=True)
         dest = Path(self.config.temp_dir) / filename
         self.logger.info(f"Downloading {filename}...")
+
         try:
-            r = subprocess.run(
-                ["curl", "-fsSL", "-o", str(dest), url],
-                capture_output=True, text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW, timeout=600,
-            )
-            if r.returncode != 0:
-                self.logger.error(f"Download failed: {r.stderr.strip()}")
-                return None
-            return dest
-        except subprocess.TimeoutExpired:
-            self.logger.error(f"Download timed out: {url}")
+            file_id = self._parse_gdrive_id(url)
+            if file_id:
+                ok = self._download_from_gdrive(file_id, dest, progress_callback, cancel_event)
+            else:
+                ok = self._download_from_url(url, dest, progress_callback, cancel_event)
+
+            if ok and dest.exists() and dest.stat().st_size > 0:
+                self.logger.info(f"Downloaded {filename} ({dest.stat().st_size / 1024:.0f} KB)")
+                return dest
+            self.logger.error(f"Download failed for {filename}")
             return None
+        except BaseException:
+            if dest.exists():
+                try:
+                    dest.unlink()
+                except Exception:
+                    pass
+            raise
+
+    def _download_from_url(self, url: str, dest: Path, progress_callback=None, cancel_event=None) -> bool:
+        self.logger.debug("Downloading from direct URL...")
+        try:
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", self.USER_AGENT)
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                self._write_stream(resp, dest, progress_callback=progress_callback, cancel_event=cancel_event)
+            return True
         except Exception as e:
-            self.logger.error(f"Download error: {e}")
-            return None
+            self.logger.error(f"Download failed: {e}")
+            return False
 
     def unzip(self, zip_path: Path, dest_dir: Optional[Path] = None) -> bool:
         dest_dir = dest_dir or Path(self.config.install_dir)
@@ -1092,14 +1356,14 @@ def select_features(msi_features: set, logger: logging.Logger) -> list:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Headless Siemens NX2506 Installation Script",
+        description="Headless Siemens NX Installation Script",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--config", "-c", default=None)
     parser.add_argument("--unattend", "-y", action="store_true")
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--uninstall", action="store_true",
-                        help="Uninstall existing NX 2506 before installing")
+                        help="Uninstall existing NX before installing")
     parser.add_argument("--skip-nx", action="store_true",
                         help="Skip NX installation (post-install steps only)")
 
@@ -1109,8 +1373,15 @@ def parse_args():
 
 def main():
     args = parse_args()
-    script_dir = Path(__file__).parent.resolve()
-    config_path = args.config or str(script_dir / "config.ini")
+    config_path = args.config
+    if not config_path:
+        if getattr(sys, 'frozen', False):
+            exe_dir = Path(sys.executable).parent.resolve()
+            embedded = Path(sys._MEIPASS) / "config.ini"
+            override = exe_dir / "config.ini"
+            config_path = str(override if override.exists() else embedded)
+        else:
+            config_path = str(Path(__file__).parent.resolve() / "config.ini")
 
     if not Path(config_path).exists():
         print(f"ERROR: Config not found: {config_path}")
@@ -1118,7 +1389,23 @@ def main():
 
     config = Config(config_path)
     logger = setup_logging(config.log_level, config.temp_dir)
-    logger.info(f"NX2506 Installer v{SCRIPT_VERSION}")
+
+    nx_version = ""
+    msi_path = find_msi(config.install_files)
+    if msi_path:
+        raw_ver = get_msi_product_version(msi_path, config.temp_dir)
+        if raw_ver:
+            nx_version = parse_nx_short_version(raw_ver)
+    if not nx_version:
+        m = re.search(r"SiemensNX[._-](\d{4})", config.install_files)
+        if m:
+            nx_version = m.group(1)
+            logger.debug(f"Extracted NX version from media path: {nx_version}")
+        else:
+            nx_version = "2506"
+            logger.warning("Could not detect NX version, defaulting to 2506.")
+
+    logger.info(f"NX{nx_version} Installer v{SCRIPT_VERSION}")
     logger.info(f"Config: {config_path}")
 
     if not check_admin_rights():
@@ -1131,16 +1418,16 @@ def main():
         sys.exit(1)
 
     if is_nx_installed() and not args.uninstall and not args.validate_only and not args.skip_nx:
-        existing = get_msi_installed_location(MSI_PRODUCT_CODE)
-        logger.warning(f"NX 2506 is already installed at: {existing}")
+        existing = get_msi_installed_location()
+        logger.warning(f"NX  is already installed at: {existing}")
         logger.warning("Use --uninstall to remove it first.")
         sys.exit(1)
 
     if args.validate_only:
-        sys.exit(0 if PostInstallValidator(config, logger).validate() else 1)
+        sys.exit(0 if PostInstallValidator(config, logger, nx_version).validate() else 1)
 
     if args.uninstall:
-        if not uninstall_nx(MSI_PRODUCT_CODE, logger):
+        if not uninstall_nx(logger=logger, config=config):
             logger.error("Uninstall failed.")
             sys.exit(1)
         logger.info("Uninstall complete. You can now run install.")
@@ -1205,8 +1492,8 @@ def main():
             sys.exit(1)
 
         zulu_src = java_extracted
-        if not dl.move(zulu_src, target_java / "zulu11"):
-            logger.error("zulu11 move failed.")
+        if not dl.move(zulu_src, target_java / "zulu17"):
+            logger.error("zulu17 move failed.")
             sys.exit(1)
 
     start_nx = dl.download(config.start_nx_url, "start_nx.bat")
@@ -1223,7 +1510,7 @@ def main():
         username = f"{name}.{surname}"
         password = f"{name}00"
         install_dir = config.install_dir.rstrip("\\")
-        java_home = str(Path(install_dir).parent / "java" / "zulu11")
+        java_home = str(Path(install_dir).parent / "java" / "zulu17")
         result = []
         for line in content.splitlines():
             if line.startswith("set JAVA_HOME="):
@@ -1242,9 +1529,9 @@ def main():
         logger.error("start_nx.bat transform failed.")
         sys.exit(1)
 
-    configure_role(config, logger)
+    configure_role(config, logger, nx_version)
 
-    if not PostInstallValidator(config, logger).validate():
+    if not PostInstallValidator(config, logger, nx_version).validate():
         logger.error("Post-install validation failed.")
         sys.exit(1)
 
